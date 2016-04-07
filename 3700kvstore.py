@@ -22,15 +22,20 @@ log = []
 data = []
 # a list of requests from users, used by the leader
 requests = []
-# the time of the most recently recieved message
+# the time of the most recently received message
 lastrec = time.time()
-# the number of votes recieved by this replica
+# the number of votes received by this replica
 votes = 0
+# the number of promises received by this replica
+promises = 0
+# the id of current leader
+leader = -1
 
 
 def log(msg):
         print '{}: {}'.format(datetime.datetime.now(), msg)
 
+log(('Replica {} starting up').format(my_id))
 
 while True:
         ready = select.select([sock], [], [], 0.1)[0]
@@ -50,32 +55,47 @@ while True:
                 if type in ['get', 'put']:
                         pass
 
-                # Handle votereq messages, send back a vote
+                # handle votereq messages, send back a vote
                 elif type == 'votereq':
-                        log('%s received a votereq from %s' % (my_id, msg['src']))
+                        log('%s received a vote request from %s' % (my_id, msg['src']))
                         # send the vote to the candidate
                         msg = {'src': my_id, 'dst': source, 'leader': 'FFFF', 'type': 'vote'}
                         sock.send(json.dumps(msg))
                         log('%s sending my vote to %s' % (msg['src'], msg['dst']))
 
+                # handle vote messages when attempting to become the leader
                 elif type == 'vote':
                         votes += 1
                         if votes > (len(replica_ids) / 2) + 1:
                                 # decree my new reign
                                 log(('I, replica # {}, am the leader!').format(my_id))
+                                leader = my_id
                                 # alert the peasants of their new king
                                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'promreq'}
                                 sock.send(json.dumps(msg))
                                 log('%s sending a promise request to %s' % (msg['src'], msg['dst']))
 
+                # handle promise request messages when building a quorum
                 elif type == 'promreq':
-                        print 'received a message from the new leader!'
-                        sys.exit(0)
+                        # acknowledge the new leader as such
+                        leader = source
+                        log('%s received a promise request from %s' % (my_id, msg['src']))
+                        # send a pledge to the leader
+                        msg = {'src': my_id, 'dst': source, 'leader': source, 'type': 'prom'}
+                        sock.send(json.dumps(msg))
+                        log('%s sending my promise to %s' % (msg['src'], msg['dst']))
+
+                elif type == 'prom':
+                        promises += 1
+                        if promises > (len(replica_ids) / 2) + 1:
+                                log('quorum has been established, commencing request execution')
 
         # if the time since the last message is between 150 - 300 milliseconds we must start elections
         if time.time() - lastrec > (random.randint(150, 300) * .001):
                 # increase the term number
                 term += 1
+                # reset any past votes
+                votes = 0
                 # send a broadcast to all replicas to make me the leader
                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'votereq'}
                 sock.send(json.dumps(msg))
