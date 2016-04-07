@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import sys, socket, select, time, json, random, datetime
+import sys, socket, select, time, json, random, datetime, collections
 
 # Your ID number
 my_id = sys.argv[1]
@@ -18,10 +18,12 @@ sock.connect(my_id)
 term = 0
 # the log of changes committed by replicas
 log = []
-# the keys and values stored on the replica
-data = []
+# the keys and values stored on the replica: <dictionary>
+data = {}
 # a list of requests from users, used by the leader
-requests = []
+requests = {}
+# a queue of requests to be executed
+todo = collections.deque()
 # the time of the most recently received message
 lastrec = time.time()
 # the number of votes received by this replica
@@ -49,11 +51,20 @@ while True:
                 msg = json.loads(msg_raw)
                 # save the sender's id
                 source = msg['src']
+                # save the type of message received
                 type = msg['type']
 
-                # For now, ignore get() and put() from clients
-                if type in ['get', 'put']:
-                        pass
+
+                # handle get messages, send back response
+                if type == 'put':
+                        if leader == my_id:
+                                log(('leader {} received a PUT request from user {}').format(my_id, source))
+                                requests[msg['MID']] = msg['key']
+                                todo.append(msg['MID'])
+                        else:
+                                log(('{} received a PUT request from user {}').format(my_id, source))
+                                ###### TODO brb fam, note to self finish implementing redirect, then implement GET handling
+
 
                 # handle votereq messages, send back a vote
                 elif type == 'votereq':
