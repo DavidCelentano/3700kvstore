@@ -49,7 +49,7 @@ while True:
 
                 if len(msg_raw) == 0: continue
                 # tracks the time of the last received message
-                lastrec = time.time()
+
                 msg = json.loads(msg_raw)
                 # save the sender's id
                 source = msg['src']
@@ -66,13 +66,21 @@ while True:
                                 log(('leader {} received a PUT request from user {}').format(my_id, source))
                                 requests[msg['key']] = msg['value']
                                 todo.append(msg['key'])
-                                clients.append(source, msgid)
+                                # need to keep track of msgid as well, tuple?
+                                clients.append(source)
+                                # remove this later TODO ---------------
+                                data[msg['key']] = msg['value']
+                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msgid}
+                                sock.send(json.dumps(msg))
+                                log('%s sending a put confirmation to user %s' % (msg['src'], msg['dst']))
+
                         # if the request goes to another replica, alert the user of the leaders location for redirect
                         else:
                                 log(('{} received a PUT request from user {}').format(my_id, source))
                                 msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'redirect', 'MID': msgid}
                                 sock.send(json.dumps(msg))
                                 log('%s sending a redirect request to user %s' % (msg['src'], msg['dst']))
+
                 # handle get messages, send back response
                 if msgtype == 'get':
                         # keep track of the message id for redirection
@@ -81,7 +89,7 @@ while True:
                         msgkey = msg['key']
                         log(('{} received a GET request from user {}').format(my_id, source))
                         # if the key exists, return the value
-                        if msgkey in data.values():
+                        if msgkey in data:
                                 msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msgid,
                                        'value': data[msgkey]}
                                 sock.send(json.dumps(msg))
@@ -90,10 +98,12 @@ while True:
                                 msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'fail', 'MID': msgid}
                                 sock.send(json.dumps(msg))
                                 log('%s sending a get failure to user %s' % (msg['src'], msg['dst']))
-
+                                print 'Current Data: {}'.format(data)
+                                print 'Requested data: {}'.format(msgkey)
 
                 # handle vote request messages, send back a vote
                 elif msgtype == 'votereq':
+                        lastrec = time.time()
                         log('%s received a vote request from %s' % (my_id, msg['src']))
                         # send the vote to the candidate
                         msg = {'src': my_id, 'dst': source, 'leader': 'FFFF', 'type': 'vote'}
@@ -102,6 +112,7 @@ while True:
 
                 # handle vote messages when attempting to become the leader
                 elif msgtype == 'vote':
+                        lastrec = time.time()
                         votes += 1
                         if votes > (len(replica_ids) / 2) + 1:
                                 # decree my new reign
@@ -114,6 +125,7 @@ while True:
 
                 # handle promise request messages when building a quorum
                 elif msgtype == 'promreq':
+                        lastrec = time.time()
                         # acknowledge the new leader as such
                         leader = source
                         log('%s received a promise request from %s' % (my_id, msg['src']))
@@ -122,13 +134,24 @@ while True:
                         sock.send(json.dumps(msg))
                         log('%s sending my promise to %s' % (msg['src'], msg['dst']))
 
+                # handle promise messages when establishing a quorum
                 elif msgtype == 'prom':
+                        lastrec = time.time()
                         promises += 1
                         if promises > (len(replica_ids) / 2) + 1:
                                 log('quorum has been established, commencing request execution')
 
+                elif msgtype == 'heartbeat':
+                        lastrec = time.time()
+
+        # send a hearbeat to keep replicas updated
+        if leader == my_id:
+                msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat'}
+                sock.send(json.dumps(msg))
+                log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
+
         # if the time since the last message is between 150 - 300 milliseconds we must start elections
-        if time.time() - lastrec > (random.randint(150, 300) * .001):
+        if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id:
                 # increase the term number
                 term += 1
                 # reset any past votes
@@ -138,11 +161,14 @@ while True:
                 sock.send(json.dumps(msg))
                 log('%s sending a vote request to %s' % (msg['src'], msg['dst']))
 
-        # clock = time.time()
-        # if clock-last > 2:
-        #         # Send a no-op message to a random peer every two seconds, just for fun
-        #         # You definitely want to remove this from your implementation
-        #         msg = {'src': my_id, 'dst': random.choice(replica_ids), 'leader': 'FFFF', 'type': 'noop'}
-        #         sock.send(json.dumps(msg))
-        #         print '%s sending a NOOP to %s' % (msg['src'], msg['dst'])
-        #         last = clock
+        # if we have put requests in our to-do list
+        #if len(todo) > 0:
+
+
+# add leader heartbeats to replicas, use that for timeout (prom request?)
+# when receiving instructions, always check the term number
+# if a replica is behind, give the leaders log to it
+# during elections, exchange log numbers to ensure the leader is the most current
+# should exchange log and term numbers in all communications, besides those to clients
+#
+
