@@ -22,8 +22,10 @@ log = []
 data = {}
 # a list of requests from users, used by the leader
 requests = {}
-# a queue of requests to be executed
+# a deque of requests to be executed
 todo = collections.deque()
+# a deque of clients to send feedback to
+clients = collections.deque()
 # the time of the most recently received message
 lastrec = time.time()
 # the number of votes received by this replica
@@ -46,28 +48,52 @@ while True:
                 msg_raw = sock.recv(32768)
 
                 if len(msg_raw) == 0: continue
-                # tracks the time of the last recieved message
+                # tracks the time of the last received message
                 lastrec = time.time()
                 msg = json.loads(msg_raw)
                 # save the sender's id
                 source = msg['src']
                 # save the type of message received
-                type = msg['type']
+                msgtype = msg['type']
 
-
-                # handle get messages, send back response
-                if type == 'put':
+                # handle put messages, send back redirect or add to to-do list
+                if msgtype == 'put':
+                        # keep track of the message id for redirection
+                        msgid = msg['MID']
+                        # if the request has reached the leader, add the pair to the requests dictionary,
+                        # add the reference id to the to-do list and add the client so we can respond later
                         if leader == my_id:
                                 log(('leader {} received a PUT request from user {}').format(my_id, source))
-                                requests[msg['MID']] = msg['key']
-                                todo.append(msg['MID'])
+                                requests[msg['key']] = msg['value']
+                                todo.append(msg['key'])
+                                clients.append(source, msgid)
+                        # if the request goes to another replica, alert the user of the leaders location for redirect
                         else:
                                 log(('{} received a PUT request from user {}').format(my_id, source))
-                                ###### TODO brb fam, note to self finish implementing redirect, then implement GET handling
+                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'redirect', 'MID': msgid}
+                                sock.send(json.dumps(msg))
+                                log('%s sending a redirect request to user %s' % (msg['src'], msg['dst']))
+                # handle get messages, send back response
+                if msgtype == 'get':
+                        # keep track of the message id for redirection
+                        msgid = msg['MID']
+                        # keep track of the message key for lookup
+                        msgkey = msg['key']
+                        log(('{} received a GET request from user {}').format(my_id, source))
+                        # if the key exists, return the value
+                        if msgkey in data.values():
+                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msgid,
+                                       'value': data[msgkey]}
+                                sock.send(json.dumps(msg))
+                                log('%s sending a get confirmation to user %s' % (msg['src'], msg['dst']))
+                        else:
+                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'fail', 'MID': msgid}
+                                sock.send(json.dumps(msg))
+                                log('%s sending a get failure to user %s' % (msg['src'], msg['dst']))
 
 
-                # handle votereq messages, send back a vote
-                elif type == 'votereq':
+                # handle vote request messages, send back a vote
+                elif msgtype == 'votereq':
                         log('%s received a vote request from %s' % (my_id, msg['src']))
                         # send the vote to the candidate
                         msg = {'src': my_id, 'dst': source, 'leader': 'FFFF', 'type': 'vote'}
@@ -75,7 +101,7 @@ while True:
                         log('%s sending my vote to %s' % (msg['src'], msg['dst']))
 
                 # handle vote messages when attempting to become the leader
-                elif type == 'vote':
+                elif msgtype == 'vote':
                         votes += 1
                         if votes > (len(replica_ids) / 2) + 1:
                                 # decree my new reign
@@ -87,7 +113,7 @@ while True:
                                 log('%s sending a promise request to %s' % (msg['src'], msg['dst']))
 
                 # handle promise request messages when building a quorum
-                elif type == 'promreq':
+                elif msgtype == 'promreq':
                         # acknowledge the new leader as such
                         leader = source
                         log('%s received a promise request from %s' % (my_id, msg['src']))
@@ -96,7 +122,7 @@ while True:
                         sock.send(json.dumps(msg))
                         log('%s sending my promise to %s' % (msg['src'], msg['dst']))
 
-                elif type == 'prom':
+                elif msgtype == 'prom':
                         promises += 1
                         if promises > (len(replica_ids) / 2) + 1:
                                 log('quorum has been established, commencing request execution')
