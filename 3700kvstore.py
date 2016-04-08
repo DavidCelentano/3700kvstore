@@ -34,6 +34,8 @@ votes = 0
 promises = 0
 # the id of current leader
 leader = -1
+# timer to send hearbeats to followers
+heartbeat = 0
 
 
 def log(msg):
@@ -145,7 +147,8 @@ while True:
                         lastrec = time.time()
 
         # send a hearbeat to keep replicas updated
-        if leader == my_id:
+        if leader == my_id and (time.time() - heartbeat) > .1:
+                hearbeat = time.time()
                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat'}
                 sock.send(json.dumps(msg))
                 log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
