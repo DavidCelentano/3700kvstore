@@ -62,6 +62,8 @@ while True:
                 if msgtype == 'put':
                         # keep track of the message id for redirection
                         msgid = msg['MID']
+                        msgkey = msg['key']
+                        msgvalue = msg['value']
                         # if the request has reached the leader, add the pair to the requests dictionary,
                         # add the reference id to the to-do list and add the client so we can respond later
                         if leader == my_id:
@@ -70,11 +72,15 @@ while True:
                                 todo.append(msg['key'])
                                 # need to keep track of msgid as well, tuple?
                                 clients.append(source)
-                                # remove this later TODO ---------------
+                                # remove this later TODO --------------- Need to send these changes to all replicas
                                 data[msg['key']] = msg['value']
                                 msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msgid}
                                 sock.send(json.dumps(msg))
                                 log('%s sending a put confirmation to user %s' % (msg['src'], msg['dst']))
+                                # TODO this a filthy hack, remove it later, just using this for the milestone and testing
+                                msg = {'src': my_id, 'dst':  'FFFF', 'leader': leader, 'type': 'info', 'key': msgkey, 'value': msgvalue}
+                                sock.send(json.dumps(msg))
+                                log('%s sending data to all replicas' % (msg['src']))
 
                         # if the request goes to another replica, alert the user of the leaders location for redirect
                         else:
@@ -82,6 +88,10 @@ while True:
                                 msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'redirect', 'MID': msgid}
                                 sock.send(json.dumps(msg))
                                 log('%s sending a redirect request to user %s' % (msg['src'], msg['dst']))
+
+                # TODO this a filthy hack, remove it later, just using this for the milestone and testing
+                if msgtype == 'info':
+                        data[msg['key']] = msg['value']
 
                 # handle get messages, send back response
                 if msgtype == 'get':
