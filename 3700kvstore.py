@@ -33,13 +33,15 @@ votes = 0
 # the number of promises received by this replica
 promises = 0
 # the id of current leader
-leader = -1
+leader = 'FFFF'
 # timer to send hearbeats to followers
 heartbeat = 0
-
+# print status
+prints = False
 
 def log(msg):
-        print '{}: {}'.format(datetime.datetime.now(), msg)
+        if prints == True:
+                print '{}: {}'.format(datetime.datetime.now(), msg)
 
 log(('Replica {} starting up').format(my_id))
 
@@ -101,20 +103,27 @@ while True:
                         msgkey = msg['key']
                         log(('{} received a GET request from user {}').format(my_id, source))
                         # if the key exists, return the value
-                        if msgkey in data:
+                        if msgkey in data and leader == my_id:
                                 msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msgid,
                                        'value': data[msgkey]}
                                 sock.send(json.dumps(msg))
                                 log('%s sending a get confirmation to user %s' % (msg['src'], msg['dst']))
+                        elif msgkey in data:
+                                log(('{} received a GET request from user {}').format(my_id, source))
+                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'redirect', 'MID': msgid}
+                                sock.send(json.dumps(msg))
+                                log('%s sending a redirect request to user %s' % (msg['src'], msg['dst']))
                         else:
                                 msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'fail', 'MID': msgid}
                                 sock.send(json.dumps(msg))
                                 log('%s sending a get failure to user %s' % (msg['src'], msg['dst']))
-                                print 'Current Data: {}'.format(data)
-                                print 'Requested data: {}'.format(msgkey)
+                                #print 'Current Data: {}'.format(data)
+                                #print 'Requested data: {}'.format(msgkey)
 
                 # handle vote request messages, send back a vote
                 elif msgtype == 'votereq':
+                        # TODO term stuff
+                        # term += 1
                         lastrec = time.time()
                         log('%s received a vote request from %s' % (my_id, msg['src']))
                         # send the vote to the candidate
@@ -169,6 +178,7 @@ while True:
                 term += 1
                 # reset any past votes
                 votes = 0
+                promises = 0
                 # send a broadcast to all replicas to make me the leader
                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'votereq'}
                 sock.send(json.dumps(msg))
@@ -178,7 +188,7 @@ while True:
         #if len(todo) > 0:
 
 
-# add leader heartbeats to replicas, use that for timeout (prom request?)
+
 # when receiving instructions, always check the term number
 # if a replica is behind, give the leaders log to it
 # during elections, exchange log numbers to ensure the leader is the most current
