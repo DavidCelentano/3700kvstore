@@ -16,8 +16,8 @@ sock.connect(my_id)
 # GLOBAL VARS #
 # the current term of leadership
 term = 0
-# the log of changes committed by replicas
-log = []
+# the log # of changes committed by replicas
+log = 0
 # the keys and values stored on the replica: <dictionary>
 data = {}
 # a list of requests from users, used by the leader
@@ -70,15 +70,17 @@ while True:
                         # add the reference id to the to-do list and add the client so we can respond later
                         if leader == my_id:
                                 log(('leader {} received a PUT request from user {}').format(my_id, source))
+                                # save the data to the requests dictionary
                                 requests[msg['key']] = msg['value']
+                                # save the key for reference in the to-do list
                                 todo.append(msg['key'])
-                                # need to keep track of msgid as well, tuple?
-                                clients.append(source)
+                                # keeps track of the source and msgid for confirmation
+                                clients.append((source, msgid))
                                 # remove this later TODO --------------- Need to send these changes to all replicas
-                                data[msg['key']] = msg['value']
-                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msgid}
-                                sock.send(json.dumps(msg))
-                                log('%s sending a put confirmation to user %s' % (msg['src'], msg['dst']))
+                                # data[msg['key']] = msg['value']
+                                # msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msgid}
+                                # sock.send(json.dumps(msg))
+                                # log('%s sending a put confirmation to user %s' % (msg['src'], msg['dst']))
                                 # TODO this a filthy hack, remove it later, just using this for the milestone and testing
                                 msg = {'src': my_id, 'dst':  'FFFF', 'leader': leader, 'type': 'info', 'key': msgkey, 'value': msgvalue}
                                 sock.send(json.dumps(msg))
@@ -93,7 +95,15 @@ while True:
 
                 # TODO this a filthy hack, remove it later, just using this for the milestone and testing
                 if msgtype == 'info':
-                        data[msg['key']] = msg['value']
+                        # store the values in the temp dictionary
+                        request[msg['key']] = msg['value']
+                        # append the key to the deque so its in the to-do list
+                        todo.append(msg['key'])
+                        # send confirmation to the leader that I am ready to commit
+                        msg = {'src': my_id, 'dst':  leader, 'leader': leader, 'type': 'ready', 'key': msgkey, 'value': msgvalue}
+                        sock.send(json.dumps(msg))
+                        log('%s sending data to all replicas' % (msg['src']))
+
 
                 # handle get messages, send back response
                 if msgtype == 'get':
