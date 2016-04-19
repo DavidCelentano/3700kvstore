@@ -225,6 +225,5 @@ while True:
 
 # if a replica is behind, give the leaders log to it
 # during elections, exchange log numbers to ensure the leader is the most current
-# we need to send failures to clients if we are in the midst of a change, perhaps create a diffirent loop or screen messages
-# seperate replica communications from client communications and commit a change once its recieved before accepting new puts or gets
+# too many faliures at the moment, sim doesnt like it, we should queue requests instead even though I kinda did that in some earlier versions :(
 
