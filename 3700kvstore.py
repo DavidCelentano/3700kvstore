@@ -20,12 +20,11 @@ term = 0
 logNum = 0
 # the keys and values stored on the replica: <dictionary>
 data = {}
-# a list of requests from users, used by the leader
-requests = {}
-# a deque of requests to be executed
-todo = collections.deque()
+tempKey = 'null'
+tempValue = 'null'
 # a deque of clients to send feedback to
-clients = collections.deque()
+client = 'null'
+msgId = 'null'
 # the time of the most recently received message
 lastrec = time.time()
 # the number of votes received by this replica
@@ -38,12 +37,11 @@ leader = 'FFFF'
 heartbeat = 0
 # print status
 prints = True
-# status of committed message
-readyToSend = True
+putting = False
+sending = False
 # number of ready to commit replicas
 readyReps = 0
-# last committed change
-lastCom = time.time()
+
 
 def log(msg):
         if prints == True:
@@ -56,36 +54,53 @@ while True:
 
         if sock in ready:
                 msg_raw = sock.recv(32768)
-
                 if len(msg_raw) == 0: continue
-                # tracks the time of the last received message
-
                 msg = json.loads(msg_raw)
                 # save the sender's id
                 source = msg['src']
                 # save the type of message received
                 msgtype = msg['type']
-
                 # handle put messages, send back redirect or add to to-do list
                 if msgtype == 'put':
-                        # keep track of the message id for redirection
-                        msgid = msg['MID']
-                        msgkey = msg['key']
-                        msgvalue = msg['value']
-                        # if the request has reached the leader, add the pair to the requests dictionary,
-                        # add the reference id to the to-do list and add the client so we can respond later
-                        if leader == my_id:
+                        id = msg['MID']
+                        if putting:
+                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'fail', 'MID': id}
+                                sock.send(json.dumps(msg))
+                                log('%s sending a PUT failure to user %s' % (msg['src'], msg['dst']))
+                        elif leader == my_id and putting == False:
                                 log(('leader {} received a PUT request from user {}').format(my_id, source))
-                                # save the data to the requests dictionary
-                                requests[msg['key']] = msg['value']
-                                # save the key for reference in the to-do list
-                                todo.append(msg['key'])
-                                # keeps track of the source and msgid for confirmation
-                                clients.append((source, msgid))
-
+                                tempValue = msg['value']
+                                tempKey = msg['key']
+                                client = source
+                                msgId = msg['MID']
+                                putting = True
                         # if the request goes to another replica, alert the user of the leaders location for redirect
                         else:
                                 log(('{} received a PUT request from user {}').format(my_id, source))
+                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'redirect', 'MID': id}
+                                sock.send(json.dumps(msg))
+                                log('%s sending a redirect request to user %s' % (msg['src'], msg['dst']))
+
+
+                # handle get messages, send back response
+                if msgtype == 'get':
+                        # keep track of the message id for redirection
+                        msgid = msg['MID']
+                        # keep track of the message key for lookup
+                        msgkey = msg['key']
+                        log(('{} received a GET request from user {}').format(my_id, source))
+                        if putting:
+                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'fail', 'MID': msgid}
+                                sock.send(json.dumps(msg))
+                                log('%s sending a GET failure to user %s' % (msg['src'], msg['dst']))
+                        # if the key exists, return the value
+                        elif msgkey in data and leader == my_id and putting == False:
+                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msgid,
+                                       'value': data[msgkey]}
+                                sock.send(json.dumps(msg))
+                                log('%s sending a GET confirmation to user %s' % (msg['src'], msg['dst']))
+                        else:
+                                log(('{} received a GET request from user {}').format(my_id, source))
                                 msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'redirect', 'MID': msgid}
                                 sock.send(json.dumps(msg))
                                 log('%s sending a redirect request to user %s' % (msg['src'], msg['dst']))
@@ -93,9 +108,9 @@ while True:
                 # handle info messages, send back 'ready to send'
                 if msgtype == 'info' and msg['log'] >= logNum and msg['term'] >= term:
                         # store the values in the temp dictionary
-                        requests[msg['key']] = msg['value']
+                        tempValue = msg['value']
                         # append the key to the deque so its in the to-do list
-                        todo.append(msg['key'])
+                        tempKey = msg['key']
                         # send confirmation to the leader that I am ready to commit
                         msg = {'src': my_id, 'dst':  leader, 'leader': leader, 'type': 'ready', 'log': logNum, 'term': term}
                         sock.send(json.dumps(msg))
@@ -106,66 +121,33 @@ while True:
                         readyReps += 1
                         # if quorum has been established
                         if readyReps > (len(replica_ids) / 2) + 1:
-                                lastCom = time.time()
                                 readyReps = 0
                                 # increase the number of committed messages
                                 logNum += 1
                                 log(('{} is committing a change').format(my_id))
-                                # remove from the to-do list, store
-                                key = todo.pop()
-                                # find the value in the request storage
-                                value = requests[key]
-                                # remove the value from temp storage
-                                del requests[key]
-                                # add the final value to the data
-                                data[key] = value
+                                # commit the change
+                                data[tempKey] = tempValue
                                 # send the commit alert to all replicas
-                                msg = {'src': my_id, 'dst': 'FFFF', 'leader': leader, 'type': 'commit', 'key': key, 'log': logNum, 'term': term}
+                                msg = {'src': my_id, 'dst': 'FFFF', 'leader': leader, 'type': 'commit', 'key': tempKey, 'log': logNum, 'term': term}
                                 sock.send(json.dumps(msg))
                                 # indicate that we are ready to commit more messages
-                                readyToSend = True
-                                (source, msgid) = clients.pop()
-                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msgid,
-                                       'value': data[msgkey]}
+                                putting = False
+                                sending = False
+                                msg = {'src': my_id, 'dst':  client, 'leader': leader, 'type': 'ok', 'MID': msgId}
                                 sock.send(json.dumps(msg))
-                                log('%s sending a put confirmation to user %s' % (msg['src'], msg['dst']))
+                                log('%s sending a PUT confirmation to user %s' % (msg['src'], msg['dst']))
 
 
                 if msgtype == 'commit' and msg['log'] >= logNum and msg['term'] >= term:
                         # if the replica has the value in temp storage
-                        if msg['key'] in todo:
+                        if msg['key'] == tempKey:
+                                logNum += 1
                                 log(('{} is committing a change').format(my_id))
-                                # remove from the to-do list, store
-                                key = todo.pop()
-                                # find the value in the request storage
-                                value = requests[key]
-                                # remove the value from temp storage
-                                del requests[key]
-                                # add the final value to the data
-                                data[key] = value
+                                data[tempKey] = tempValue
                         # if the replica does not have the value
                         else:
                                 log(('{} cannot commit the change!').format(my_id))
 
-
-                # handle get messages, send back response
-                if msgtype == 'get':
-                        # keep track of the message id for redirection
-                        msgid = msg['MID']
-                        # keep track of the message key for lookup
-                        msgkey = msg['key']
-                        log(('{} received a GET request from user {}').format(my_id, source))
-                        # if the key exists, return the value
-                        if msgkey in data and leader == my_id:
-                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msgid,
-                                       'value': data[msgkey]}
-                                sock.send(json.dumps(msg))
-                                log('%s sending a get confirmation to user %s' % (msg['src'], msg['dst']))
-                        else:
-                                log(('{} received a GET request from user {}').format(my_id, source))
-                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'redirect', 'MID': msgid}
-                                sock.send(json.dumps(msg))
-                                log('%s sending a redirect request to user %s' % (msg['src'], msg['dst']))
 
                 # handle vote request messages, send back a vote
                 elif msgtype == 'votereq' and msg['log'] >= logNum and msg['term'] >= term:
@@ -233,17 +215,9 @@ while True:
                 log('%s sending a vote request to %s' % (msg['src'], msg['dst']))
 
         # if we have put requests in our to-do list
-        if len(todo) > 0 and readyToSend and leader == my_id and time.time() - lastCom > .3:
-                #TODO need to set a time to resend info
-                # reset replicas ready to commit counter
-                ready = 0
-                # blocks more put requests until the current one is committed
-                readyToSend = False
-                msgkey = todo.pop()
-                todo.append(msgkey)
-                msgvalue = requests[msgkey]
-                # send out the temp info to replicas
-                msg = {'src': my_id, 'dst':  'FFFF', 'leader': leader, 'type': 'info', 'key': msgkey, 'value': msgvalue, 'log': logNum, 'term': term}
+        if putting and not sending:
+                sending = True
+                msg = {'src': my_id, 'dst':  'FFFF', 'leader': leader, 'type': 'info', 'key': tempKey, 'value': tempValue, 'log': logNum, 'term': term}
                 sock.send(json.dumps(msg))
                 log('%s sending data to all replicas' % (msg['src']))
 
