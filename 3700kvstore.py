@@ -20,11 +20,11 @@ term = 0
 logNum = 0
 # the keys and values stored on the replica: <dictionary>
 data = {}
-tempKey = 'null'
-tempValue = 'null'
+tempKey = -1
+tempValue = -1
 # a deque of clients to send feedback to
-client = 'null'
-msgId = 'null'
+client = -1
+msg_id = -1
 # the time of the most recently received message
 lastrec = time.time()
 # the number of votes received by this replica
@@ -37,10 +37,11 @@ leader = 'FFFF'
 heartbeat = 0
 # print status
 prints = True
-putting = False
 sending = False
 # number of ready to commit replicas
 readyReps = 0
+
+msg_queue = collections.deque()
 
 
 def log(msg):
@@ -62,18 +63,13 @@ while True:
                 msgtype = msg['type']
                 # handle put messages, send back redirect or add to to-do list
                 if msgtype == 'put':
+                        key = msg['key']
+                        val = msg['value']
                         id = msg['MID']
-                        if putting:
-                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'fail', 'MID': id}
-                                sock.send(json.dumps(msg))
-                                log('%s sending a PUT failure to user %s' % (msg['src'], msg['dst']))
-                        elif leader == my_id and putting == False:
+                        if leader == my_id:
+                                msg_info = (key, val, source, id, msgtype)
+                                msg_queue.append(msg_info)
                                 log(('leader {} received a PUT request from user {}').format(my_id, source))
-                                tempValue = msg['value']
-                                tempKey = msg['key']
-                                client = source
-                                msgId = msg['MID']
-                                putting = True
                         # if the request goes to another replica, alert the user of the leaders location for redirect
                         else:
                                 log(('{} received a PUT request from user {}').format(my_id, source))
@@ -84,26 +80,19 @@ while True:
 
                 # handle get messages, send back response
                 if msgtype == 'get':
-                        # keep track of the message id for redirection
-                        msgid = msg['MID']
-                        # keep track of the message key for lookup
-                        msgkey = msg['key']
                         log(('{} received a GET request from user {}').format(my_id, source))
-                        if putting:
-                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'fail', 'MID': msgid}
-                                sock.send(json.dumps(msg))
-                                log('%s sending a GET failure to user %s' % (msg['src'], msg['dst']))
-                        # if the key exists, return the value
-                        elif msgkey in data and leader == my_id and putting == False:
-                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msgid,
-                                       'value': data[msgkey]}
-                                sock.send(json.dumps(msg))
-                                log('%s sending a GET confirmation to user %s' % (msg['src'], msg['dst']))
+                        id = msg['MID']
+                        if leader == my_id:
+                                key = msg['key']
+                                id = msg['MID']
+                                if leader == my_id:
+                                        msg_info = (key, -1, source, id, msgtype)
+                                        msg_queue.append(msg_info)
                         else:
                                 log(('{} received a GET request from user {}').format(my_id, source))
-                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'redirect', 'MID': msgid}
+                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'redirect', 'MID': id}
                                 sock.send(json.dumps(msg))
-                                log('%s sending a redirect request to user %s' % (msg['src'], msg['dst']))
+                                log('%s sending a redirect request to user %s' % (my_id, source))
 
                 # handle info messages, send back 'ready to send'
                 if msgtype == 'info' and msg['log'] >= logNum and msg['term'] >= term:
@@ -121,6 +110,8 @@ while True:
                         readyReps += 1
                         # if quorum has been established
                         if readyReps > (len(replica_ids) / 2) + 1:
+                                # TODO figure this stuff out so future readies dont reactivate this before
+                                # a new PUT
                                 readyReps = 0
                                 # increase the number of committed messages
                                 logNum += 1
@@ -131,9 +122,8 @@ while True:
                                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': leader, 'type': 'commit', 'key': tempKey, 'log': logNum, 'term': term}
                                 sock.send(json.dumps(msg))
                                 # indicate that we are ready to commit more messages
-                                putting = False
                                 sending = False
-                                msg = {'src': my_id, 'dst':  client, 'leader': leader, 'type': 'ok', 'MID': msgId}
+                                msg = {'src': my_id, 'dst':  client, 'leader': leader, 'type': 'ok', 'MID': msg_id}
                                 sock.send(json.dumps(msg))
                                 log('%s sending a PUT confirmation to user %s' % (msg['src'], msg['dst']))
 
@@ -197,7 +187,7 @@ while True:
                 elif msgtype == 'heartbeat':
                         #TODO update old replicas
                         lastrec = time.time()
-                        leader = msg['source']
+                        leader = msg['src']
 
 
         # send a hearbeat to keep replicas updated
@@ -221,11 +211,25 @@ while True:
                 log('%s sending a vote request to %s' % (msg['src'], msg['dst']))
 
         # if we have put requests in our to-do list
-        if putting and not sending:
-                sending = True
-                msg = {'src': my_id, 'dst':  'FFFF', 'leader': leader, 'type': 'info', 'key': tempKey, 'value': tempValue, 'log': logNum, 'term': term}
-                sock.send(json.dumps(msg))
-                log('%s sending data to all replicas' % (msg['src']))
+        if not sending and msg_queue and leader == my_id:
+                readyReps = 0
+                req = msg_queue.popleft()
+                tempKey = req[0]
+                tempValue = req[1]
+                client = req[2]
+                msg_id = req[3]
+                if req[4] == 'get':
+                        if tempKey in data:
+                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msg_id,
+                                       'value': data[tempKey]}
+                                sock.send(json.dumps(msg))
+                                log('%s sending a GET confirmation to user %s' % (my_id, source))
+                        # TODO what if the key doesnt exist
+                elif req[4] == 'put':
+                        sending = True
+                        msg = {'src': my_id, 'dst':  'FFFF', 'leader': my_id, 'type': 'info', 'key': tempKey, 'value': tempValue, 'log': logNum, 'term': term}
+                        sock.send(json.dumps(msg))
+                        log('%s sending data to all replicas' % (my_id))
 
 
 
