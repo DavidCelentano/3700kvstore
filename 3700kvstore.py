@@ -195,7 +195,9 @@ while True:
                                 log('quorum has been established, commencing request execution')
 
                 elif msgtype == 'heartbeat':
+                        #TODO update old replicas
                         lastrec = time.time()
+                        leader = msg['source']
 
 
         # send a hearbeat to keep replicas updated
