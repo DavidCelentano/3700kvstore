@@ -42,6 +42,8 @@ prints = True
 readyToSend = True
 # number of ready to commit replicas
 readyReps = 0
+# last committed change
+lastCom = time.time()
 
 def log(msg):
         if prints == True:
@@ -104,6 +106,7 @@ while True:
                         readyReps += 1
                         # if quorum has been established
                         if readyReps > (len(replica_ids) / 2) + 1:
+                                lastCom = time.time()
                                 readyReps = 0
                                 # increase the number of committed messages
                                 logNum += 1
@@ -119,14 +122,13 @@ while True:
                                 # send the commit alert to all replicas
                                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': leader, 'type': 'commit', 'key': key, 'log': logNum, 'term': term}
                                 sock.send(json.dumps(msg))
-                                log('%s sending data to all replicas' % (msg['src']))
                                 # indicate that we are ready to commit more messages
                                 readyToSend = True
                                 (source, msgid) = clients.pop()
                                 msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msgid,
                                        'value': data[msgkey]}
                                 sock.send(json.dumps(msg))
-                                log('%s sending a get confirmation to user %s' % (msg['src'], msg['dst']))
+                                log('%s sending a put confirmation to user %s' % (msg['src'], msg['dst']))
 
 
                 if msgtype == 'commit' and msg['log'] >= logNum and msg['term'] >= term:
@@ -216,7 +218,7 @@ while True:
                 hearbeat = time.time()
                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
                 sock.send(json.dumps(msg))
-                log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
+                # log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
 
         # if the time since the last message is between 150 - 300 milliseconds we must start elections
         if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id:
@@ -231,7 +233,7 @@ while True:
                 log('%s sending a vote request to %s' % (msg['src'], msg['dst']))
 
         # if we have put requests in our to-do list
-        if len(todo) > 0 and readyToSend and leader == my_id:
+        if len(todo) > 0 and readyToSend and leader == my_id and time.time() - lastCom > .3:
                 #TODO need to set a time to resend info
                 # reset replicas ready to commit counter
                 ready = 0
@@ -247,9 +249,8 @@ while True:
 
 
 
-# when receiving instructions, always check the term number
 # if a replica is behind, give the leaders log to it
 # during elections, exchange log numbers to ensure the leader is the most current
-# should exchange log and term numbers in all communications, besides those to clients
-#
+# we need to send failures to clients if we are in the midst of a change, perhaps create a diffirent loop or screen messages
+# seperate replica communications from client communications and commit a change once its recieved before accepting new puts or gets
 
