@@ -150,7 +150,7 @@ while True:
 
 
                 # handle vote request messages, send back a vote
-                elif msgtype == 'votereq' and msg['log'] >= logNum and msg['term'] >= term:
+                elif msgtype == 'votereq' and msg['term'] > term:
                         # TODO term stuff
                         term += 1
                         lastrec = time.time()
@@ -161,7 +161,8 @@ while True:
                         log('%s sending my vote to %s' % (msg['src'], msg['dst']))
 
                 # handle vote messages when attempting to become the leader
-                elif msgtype == 'vote' and msg['log'] >= logNum and msg['term'] >= term:
+                elif msgtype == 'vote' and msg['term'] == term:
+                        leader = 'FFFF'
                         lastrec = time.time()
                         votes += 1
                         if votes > (len(replica_ids) / 2) + 1:
@@ -174,18 +175,20 @@ while True:
                                 log('%s sending a promise request to %s' % (msg['src'], msg['dst']))
 
                 # handle promise request messages when building a quorum
-                elif msgtype == 'promreq' and msg['log'] >= logNum and msg['term'] >= term:
+                elif msgtype == 'promreq':
+                        term = msg['term']
+                        #TODO get stuff if your log number is behind
                         lastrec = time.time()
                         # acknowledge the new leader as such
                         leader = source
                         log('%s received a promise request from %s' % (my_id, msg['src']))
                         # send a pledge to the leader
-                        msg = {'src': my_id, 'dst': source, 'leader': source, 'type': 'prom', 'log': logNum, 'term': term}
+                        msg = {'src': my_id, 'dst': source, 'leader': leader, 'type': 'prom', 'log': logNum, 'term': term}
                         sock.send(json.dumps(msg))
                         log('%s sending my promise to %s' % (msg['src'], msg['dst']))
 
                 # handle promise messages when establishing a quorum
-                elif msgtype == 'prom' and msg['log'] >= logNum and msg['term'] >= term:
+                elif msgtype == 'prom' and msg['term'] >= term:
                         lastrec = time.time()
                         promises += 1
                         if promises > (len(replica_ids) / 2) + 1:
@@ -204,6 +207,7 @@ while True:
 
         # if the time since the last message is between 150 - 300 milliseconds we must start elections
         if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id:
+                leader = 'FFFF'
                 # increase the term number
                 term += 1
                 # reset any past votes
