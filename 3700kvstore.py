@@ -85,9 +85,8 @@ while True:
                         if leader == my_id:
                                 key = msg['key']
                                 id = msg['MID']
-                                if leader == my_id:
-                                        msg_info = (key, -1, source, id, msgtype)
-                                        msg_queue.append(msg_info)
+                                msg_info = (key, -1, source, id, msgtype)
+                                msg_queue.append(msg_info)
                         else:
                                 log(('{} received a GET request from user {}').format(my_id, source))
                                 msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'redirect', 'MID': id}
@@ -220,7 +219,7 @@ while True:
                 msg_id = req[3]
                 if req[4] == 'get':
                         if tempKey in data:
-                                msg = {'src': my_id, 'dst':  source, 'leader': leader, 'type': 'ok', 'MID': msg_id,
+                                msg = {'src': my_id, 'dst':  client, 'leader': leader, 'type': 'ok', 'MID': msg_id,
                                        'value': data[tempKey]}
                                 sock.send(json.dumps(msg))
                                 log('%s sending a GET confirmation to user %s' % (my_id, source))
