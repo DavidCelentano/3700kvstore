@@ -40,7 +40,7 @@ prints = True
 sending = False
 # number of ready to commit replicas
 readyReps = 0
-panic = False
+
 
 msg_queue = collections.deque()
 
@@ -122,6 +122,7 @@ while True:
                                 # send the commit alert to all replicas
                                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': leader, 'type': 'commit', 'key': tempKey, 'log': logNum, 'term': term}
                                 sock.send(json.dumps(msg))
+                                hearbeat = time.time()
                                 # indicate that we are ready to commit more messages
                                 sending = False
                                 msg = {'src': my_id, 'dst':  client, 'leader': leader, 'type': 'ok', 'MID': msg_id}
@@ -192,21 +193,17 @@ while True:
                         panic = False
                         leader = msg['src']
 
-                elif msgtype == 'check' and leader == my_id:
-                        msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
-                        sock.send(json.dumps(msg))
-
 
         # send a hearbeat to keep replicas updated
-        if leader == my_id and (time.time() - heartbeat) > 90000: #TODO testing NACK heartbeats
+        if leader == my_id and (time.time() - heartbeat) > .1:
                 hearbeat = time.time()
                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
                 sock.send(json.dumps(msg))
                 # log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
 
         # if the time since the last message is between 150 - 300 milliseconds we must start elections
-        if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id and panic:
-                panic == False
+        if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id:
+                log(('{} starting new election').format(my_id))
                 leader = 'FFFF'
                 # increase the term number
                 term += 1
@@ -217,11 +214,6 @@ while True:
                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'votereq', 'log': logNum, 'term': term}
                 sock.send(json.dumps(msg))
                 log('%s sending a vote request to %s' % (msg['src'], msg['dst']))
-
-        if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id:
-                panic == True
-                msg = {'src': my_id, 'dst': leader, 'leader': leader, 'type': 'check', 'log': logNum, 'term': term}
-                sock.send(json.dumps(msg))
 
         # if we have put requests in our to-do list
         if not sending and msg_queue and leader == my_id:
@@ -236,12 +228,14 @@ while True:
                                 msg = {'src': my_id, 'dst':  client, 'leader': leader, 'type': 'ok', 'MID': msg_id,
                                        'value': data[tempKey]}
                                 sock.send(json.dumps(msg))
+                                hearbeat = time.time()
                                 log('%s sending a GET confirmation to user %s' % (my_id, source))
                         # TODO what if the key doesnt exist
                 elif req[4] == 'put':
                         sending = True
                         msg = {'src': my_id, 'dst':  'FFFF', 'leader': my_id, 'type': 'info', 'key': tempKey, 'value': tempValue, 'log': logNum, 'term': term}
                         sock.send(json.dumps(msg))
+                        hearbeat = time.time()
                         log('%s sending data to all replicas' % (my_id))
 
 
