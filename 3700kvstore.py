@@ -40,6 +40,7 @@ prints = True
 sending = False
 # number of ready to commit replicas
 readyReps = 0
+panic = False
 
 msg_queue = collections.deque()
 
@@ -95,6 +96,7 @@ while True:
 
                 # handle info messages, send back 'ready to send'
                 if msgtype == 'info' and msg['log'] >= logNum and msg['term'] >= term:
+                        lastrec = time.time()
                         # store the values in the temp dictionary
                         tempValue = msg['value']
                         # append the key to the deque so its in the to-do list
@@ -128,6 +130,7 @@ while True:
 
 
                 if msgtype == 'commit' and msg['log'] >= logNum and msg['term'] >= term:
+                        lastrec = time.time()
                         # if the replica has the value in temp storage
                         if msg['key'] == tempKey:
                                 logNum += 1
@@ -186,18 +189,24 @@ while True:
                 elif msgtype == 'heartbeat':
                         #TODO update old replicas
                         lastrec = time.time()
+                        panic = False
                         leader = msg['src']
+
+                elif msgtype == 'check' and leader == my_id:
+                        msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
+                        sock.send(json.dumps(msg))
 
 
         # send a hearbeat to keep replicas updated
-        if leader == my_id and (time.time() - heartbeat) > .1:
+        if leader == my_id and (time.time() - heartbeat) > 90000: #TODO testing NACK heartbeats
                 hearbeat = time.time()
                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
                 sock.send(json.dumps(msg))
                 # log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
 
         # if the time since the last message is between 150 - 300 milliseconds we must start elections
-        if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id:
+        if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id and panic:
+                panic == False
                 leader = 'FFFF'
                 # increase the term number
                 term += 1
@@ -208,6 +217,11 @@ while True:
                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'votereq', 'log': logNum, 'term': term}
                 sock.send(json.dumps(msg))
                 log('%s sending a vote request to %s' % (msg['src'], msg['dst']))
+
+        if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id:
+                panic == True
+                msg = {'src': my_id, 'dst': leader, 'leader': leader, 'type': 'check', 'log': logNum, 'term': term}
+                sock.send(json.dumps(msg))
 
         # if we have put requests in our to-do list
         if not sending and msg_queue and leader == my_id:
@@ -231,8 +245,8 @@ while True:
                         log('%s sending data to all replicas' % (my_id))
 
 
-
+# TODO LIST
 # if a replica is behind, give the leaders log to it
 # during elections, exchange log numbers to ensure the leader is the most current
-# too many faliures at the moment, sim doesnt like it, we should queue requests instead even though I kinda did that in some earlier versions :(
+# too many messages being sent
 
