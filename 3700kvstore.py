@@ -40,7 +40,7 @@ sending = False
 # number of ready to commit replicas
 readyReps = 0
 # time until send next heartbeat
-heartbeat = time.time()
+heartbeat = 0
 # time since we've sent commit data to replicas
 send_time = time.time()
 
@@ -50,6 +50,19 @@ msg_queue = collections.deque()
 def log(msg):
         if prints == True:
                 print '{}: {}'.format(datetime.datetime.now(), msg)
+
+def restore():
+        msg = {'src': my_id, 'dst': leader, 'leader': leader, 'type': 'restore', 'log': logNum, 'term': term}
+        sock.send(json.dumps(msg))
+        log('%s sending a data request to %s' % (msg['src'], msg['dst']))
+
+def heartbeat_update():
+        global heartbeat
+        heartbeat = time.time()
+
+def send_as_leader(socket, msg):
+    heartbeat_update()
+    socket.send(json.dumps(msg))
 
 log(('Replica {} starting up').format(my_id))
 
@@ -118,14 +131,13 @@ while True:
                                 # a new PUT
                                 readyReps = 0
                                 # increase the number of committed messages
-                                heartbeat = time.time()
                                 logNum += 1
                                 log(('{} is committing a change').format(my_id))
                                 # commit the change
                                 data[tempKey] = tempValue
                                 # send the commit alert to all replicas
                                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': leader, 'type': 'commit', 'key': tempKey, 'log': logNum, 'term': term}
-                                sock.send(json.dumps(msg))
+                                send_as_leader(sock, msg)
                                 hearbeat = time.time()
                                 # indicate that we are ready to commit more messages
                                 sending = False
@@ -148,7 +160,6 @@ while True:
 
                 # handle vote request messages, send back a vote
                 elif msgtype == 'votereq' and msg['term'] > term:
-                        # TODO term stuff
                         term += 1
                         lastrec = time.time()
                         log('%s received a vote request from %s' % (my_id, msg['src']))
@@ -174,7 +185,8 @@ while True:
                 # handle promise request messages when building a quorum
                 elif msgtype == 'promreq':
                         term = msg['term']
-                        #TODO get stuff if your log number is behind
+                        if logNum < msg['log']:
+                                restore()
                         lastrec = time.time()
                         # acknowledge the new leader as such
                         leader = source
@@ -192,21 +204,30 @@ while True:
                                 log('quorum has been established, commencing request execution')
 
                 elif msgtype == 'heartbeat':
-                        #TODO update old replicas
+                        # catch up an out dated replica
+                        if logNum < msg['log']:
+                                restore()
                         lastrec = time.time()
-                        panic = False
                         leader = msg['src']
 
-                elif msgtype == 'check' and leader == my_id:
-                        msg = {'src': my_id, 'dst': msg['src'], 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
+                elif msgtype == 'restore':
+                        msg = {'src': my_id, 'dst': source, 'leader': my_id, 'type': 'restoration', 'log': logNum, 'term': term, 'data': data}
                         sock.send(json.dumps(msg))
-                        sock.send(json.dumps(msg)) #TODO double sending to avoid drops, real sloppy
-                        log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
 
-        if time.time() - heartbeat > .13:
+                elif msgtype == 'restoration':
+                        data = msg['data']
+                        term = msg['term']
+                        logNum = msg['log']
+                        log(('{} restored to current data').fomrat(my_id))
+
+
+
+
+
+        if (time.time() - heartbeat) > .1 and leader == my_id:
                         msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
-                        sock.send(json.dumps(msg))
-                        #log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
+                        send_as_leader(sock, msg)
+                        log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
 
         # if the time since the last message is between 150 - 300 milliseconds we must check on the leader, then start elections
         if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id:
@@ -243,15 +264,14 @@ while True:
                 elif req[4] == 'put':
                         sending = True
                         msg = {'src': my_id, 'dst':  'FFFF', 'leader': my_id, 'type': 'info', 'key': tempKey, 'value': tempValue, 'log': logNum, 'term': term}
-                        sock.send(json.dumps(msg))
+                        send_as_leader(sock, msg)
                         send_time = time.time()
-                        heartbeat = time.time()
                         log('%s sending data to all replicas' % (my_id))
 
         # if we haven't committed something, must resend the info
         if sending and (time.time() - send_time) > .1 and leader == my_id: #TODO this seems to have problems with crash-1, dont know why
                         msg = {'src': my_id, 'dst':  'FFFF', 'leader': my_id, 'type': 'info', 'key': tempKey, 'value': tempValue, 'log': logNum, 'term': term}
-                        sock.send(json.dumps(msg))
+                        send_as_leader(sock, msg)
                         send_time = time.time()
                         log('%s RE-sending data to all replicas' % (my_id))
 
