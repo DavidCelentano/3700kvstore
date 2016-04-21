@@ -34,7 +34,7 @@ promises = 0
 # the id of current leader
 leader = 'FFFF'
 # print status
-prints = True
+prints = False
 # if we are in the process of a commit or not
 sending = False
 # number of ready to commit replicas
@@ -160,6 +160,7 @@ while True:
 
                 # handle vote request messages, send back a vote
                 elif msgtype == 'votereq' and msg['term'] > term:
+                        leader = 'FFFF'
                         term += 1
                         lastrec = time.time()
                         log('%s received a vote request from %s' % (my_id, msg['src']))
@@ -170,10 +171,13 @@ while True:
 
                 # handle vote messages when attempting to become the leader
                 elif msgtype == 'vote' and msg['term'] == term:
-                        leader = 'FFFF'
                         lastrec = time.time()
                         votes += 1
-                        if votes > (len(replica_ids) / 2) + 1:
+                        if logNum < msg['log']:
+                                msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'elect', 'id': source}
+                                sock.send(json.dumps(msg))
+                                log('%s sending an elect request to %s' % (msg['src'], msg['dst']))
+                        elif votes > (len(replica_ids) / 2) + 1:
                                 # decree my new reign
                                 log(('I, replica # {}, am the leader!').format(my_id))
                                 leader = my_id
@@ -181,6 +185,12 @@ while True:
                                 msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'promreq', 'log': logNum, 'term': term}
                                 sock.send(json.dumps(msg))
                                 log('%s sending a promise request to %s' % (msg['src'], msg['dst']))
+
+                elif msgtype == 'elect':
+                        lastrec = time.time()
+                        # this allows the most current replica to start the election
+                        if msg['id'] == my_id:
+                                lastrec = 0
 
                 # handle promise request messages when building a quorum
                 elif msgtype == 'promreq':
@@ -223,7 +233,7 @@ while True:
 
 
 
-
+        # keep followers aware of the leaders existence
         if (time.time() - heartbeat) > .1 and leader == my_id:
                         msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
                         send_as_leader(sock, msg)
@@ -278,7 +288,6 @@ while True:
 # TODO LIST
 # fix leader transfer issues, gate sending abilities to leaders only
 # maybe we should send the queue to replicas every second or so?
-# if a replica is behind, give the leaders log to it
 # during elections, exchange log numbers to ensure the leader is the most current
 
 
