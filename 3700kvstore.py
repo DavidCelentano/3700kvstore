@@ -109,7 +109,7 @@ while True:
                         log(('{} sending ready to commit').format(my_id))
 
                 # handle ready messages, when enough are acquired, commit the change
-                if msgtype == 'ready' and msg['log'] >= logNum and msg['term'] >= term and leader == my_id:
+                if msgtype == 'ready' and msg['log'] >= logNum and msg['term'] >= term:
                         readyReps += 1
                         send_time = time.time()
                         # if quorum has been established
@@ -196,10 +196,9 @@ while True:
                         panic = False
                         leader = msg['src']
 
-                elif msgtype == 'check' and leader == my_id:
+                elif msgtype == 'check':
                         msg = {'src': my_id, 'dst': msg['src'], 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
                         sock.send(json.dumps(msg))
-                        sock.send(json.dumps(msg)) #TODO double sending to avoid drops, real sloppy
                         log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
 
 
@@ -221,12 +220,12 @@ while True:
                         panic = True
                         msg = {'src': my_id, 'dst': leader, 'leader': leader, 'type': 'check', 'log': logNum, 'term': term}
                         sock.send(json.dumps(msg))
-                        sock.send(json.dumps(msg)) #TODO double sending to avoid drops, real sloppy
                         log('%s sending a check to %s' % (msg['src'], msg['dst']))
                 lastrec = time.time()
 
         # if we have put requests in our to-do list
         if not sending and msg_queue and leader == my_id:
+                readyReps = 0
                 req = msg_queue.popleft()
                 tempKey = req[0]
                 tempValue = req[1]
@@ -238,10 +237,7 @@ while True:
                                        'value': data[tempKey]}
                                 sock.send(json.dumps(msg))
                                 log('%s sending a GET confirmation to user %s' % (my_id, source))
-                        else:
-                                msg = {'src': my_id, 'dst':  client, 'leader': leader, 'type': 'fail', 'MID': msg_id}
-                                sock.send(json.dumps(msg))
-                                log('%s sending a GET FAILURE to user %s' % (my_id, source))
+                        # TODO what if the key doesnt exist
                 elif req[4] == 'put':
                         sending = True
                         msg = {'src': my_id, 'dst':  'FFFF', 'leader': my_id, 'type': 'info', 'key': tempKey, 'value': tempValue, 'log': logNum, 'term': term}
@@ -250,15 +246,13 @@ while True:
                         log('%s sending data to all replicas' % (my_id))
 
         # if we haven't committed something, must resend the info
-        if sending and (time.time() - send_time) > .1 and leader == my_id: #TODO this seems to have problems with crash-1, dont know why
+        if sending and (time.time() - send_time) > .150:
                         msg = {'src': my_id, 'dst':  'FFFF', 'leader': my_id, 'type': 'info', 'key': tempKey, 'value': tempValue, 'log': logNum, 'term': term}
                         sock.send(json.dumps(msg))
-                        send_time = time.time()
                         log('%s RE-sending data to all replicas' % (my_id))
 
 # TODO LIST
 # fix leader transfer issues, gate sending abilities to leaders only
-# maybe we should send the queue to replicas every second or so?
 # if a replica is behind, give the leaders log to it
 # during elections, exchange log numbers to ensure the leader is the most current
 
