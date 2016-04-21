@@ -228,7 +228,7 @@ while True:
                         data = msg['data']
                         term = msg['term']
                         logNum = msg['log']
-                        log(('{} restored to current data').fomrat(my_id))
+                        log(('{} restored to current data').format(my_id))
 
 
 
