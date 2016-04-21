@@ -81,9 +81,25 @@ def check_socket(socket):
     else:
         return ''
 
-def request_update(term):
-    global leader
-    s_msg = {'src': my_id, 'dst': leader, 'leader': leader, 'type': 'update', 'term': term}
+def request_update(new_term):
+    global leader, term
+    if commit_log:
+        id = commit_log[-1]['id']
+    else:
+        id = -1
+    s_msg = {'src': my_id, 'dst': leader, 'leader': leader, 'type': 'update', 'id': id, 'term': term}
+    term = new_term
+    norm_send(sock, s_msg)
+
+def send_update(id, source):
+    global leader, term, commit_log
+    slice = 0
+    for x in xrange(len(commit_log)):
+        if commit_log[x]['id'] == id:
+            slice = x
+            break
+    data = commit_log[slice:]
+    s_msg = {'src': my_id, 'dst': source, 'leader': leader, 'type': 'update', 'data': data, 'term': term}
     norm_send(sock, s_msg)
 
 log(('Replica {} starting up').format(my_id))
@@ -148,8 +164,10 @@ while True:
             msg_type = msg['type']
             if msg_type == 'append' and msg['term'] > term:
                 become_follower(source)
-                request_update(term)
+                request_update(msg['term'])
                 continue
+            if msg_type == 'update':
+                send_update(msg['term'], source)
 
         # heartbeat not heard in a while
         if time.time() - elect_timer > random.randint(150, 300):
