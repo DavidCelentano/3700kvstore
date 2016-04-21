@@ -33,14 +33,14 @@ votes = 0
 promises = 0
 # the id of current leader
 leader = 'FFFF'
+# timer to send hearbeats to followers
+heartbeat = 0
 # print status
 prints = True
-# if we are in the process of a commit or not
 sending = False
 # number of ready to commit replicas
 readyReps = 0
-# if we haven't heard from the leader, singals start of an election
-panic = False
+
 
 msg_queue = collections.deque()
 
@@ -193,32 +193,27 @@ while True:
                         panic = False
                         leader = msg['src']
 
-                elif msgtype == 'check':
-                        msg = {'src': my_id, 'dst': msg['src'], 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
-                        sock.send(json.dumps(msg))
-                        log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
 
+        # send a hearbeat to keep replicas updated
+        if leader == my_id and (time.time() - heartbeat) > .1:
+                hearbeat = time.time()
+                #msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
+                #sock.send(json.dumps(msg))
+                # log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
 
-        # if the time since the last message is between 150 - 300 milliseconds we must check on the leader, then start elections
-        if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id:
-                if panic == True or leader == 'FFFF':
-                        log(('{} starting new election').format(my_id))
-                        leader = 'FFFF'
-                        # increase the term number
-                        term += 1
-                        # reset any past votes
-                        votes = 0
-                        promises = 0
-                        # send a broadcast to all replicas to make me the leader
-                        msg = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'votereq', 'log': logNum, 'term': term}
-                        sock.send(json.dumps(msg))
-                        log('%s sending a vote request to %s' % (msg['src'], msg['dst']))
-                else:
-                        panic = True
-                        msg = {'src': my_id, 'dst': leader, 'leader': leader, 'type': 'check', 'log': logNum, 'term': term}
-                        sock.send(json.dumps(msg))
-                        log('%s sending a check to %s' % (msg['src'], msg['dst']))
-                lastrec = time.time()
+        # if the time since the last message is between 150 - 300 milliseconds we must start elections
+        if time.time() - lastrec > (random.randint(150, 300) * .001) and leader == 'FFFF': #TODO testing
+                log(('{} starting new election').format(my_id))
+                leader = 'FFFF'
+                # increase the term number
+                term += 1
+                # reset any past votes
+                votes = 0
+                promises = 0
+                # send a broadcast to all replicas to make me the leader
+                msg = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'votereq', 'log': logNum, 'term': term}
+                sock.send(json.dumps(msg))
+                log('%s sending a vote request to %s' % (msg['src'], msg['dst']))
 
         # if we have put requests in our to-do list
         if not sending and msg_queue and leader == my_id:
@@ -245,8 +240,7 @@ while True:
 
 
 # TODO LIST
-# refresh put commit process if info / ready gets dropped
 # if a replica is behind, give the leaders log to it
 # during elections, exchange log numbers to ensure the leader is the most current
-
+# too many messages being sent
 
