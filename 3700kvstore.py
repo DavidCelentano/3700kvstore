@@ -39,8 +39,8 @@ prints = True
 sending = False
 # number of ready to commit replicas
 readyReps = 0
-# if we haven't heard from the leader, singals start of an election
-panic = False
+# time until send next heartbeat
+heartbeat = time.time()
 # time since we've sent commit data to replicas
 send_time = time.time()
 
@@ -118,6 +118,7 @@ while True:
                                 # a new PUT
                                 readyReps = 0
                                 # increase the number of committed messages
+                                heartbeat = time.time()
                                 logNum += 1
                                 log(('{} is committing a change').format(my_id))
                                 # commit the change
@@ -202,27 +203,24 @@ while True:
                         sock.send(json.dumps(msg)) #TODO double sending to avoid drops, real sloppy
                         log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
 
+        if time.time() - heartbeat > .13:
+                        msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
+                        sock.send(json.dumps(msg))
+                        #log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
 
         # if the time since the last message is between 150 - 300 milliseconds we must check on the leader, then start elections
         if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id:
-                if panic == True or leader == 'FFFF':
-                        log(('{} starting new election').format(my_id))
-                        leader = 'FFFF'
-                        # increase the term number
-                        term += 1
-                        # reset any past votes
-                        votes = 0
-                        promises = 0
-                        # send a broadcast to all replicas to make me the leader
-                        msg = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'votereq', 'log': logNum, 'term': term}
-                        sock.send(json.dumps(msg))
-                        log('%s sending a vote request to %s' % (msg['src'], msg['dst']))
-                else:
-                        panic = True
-                        msg = {'src': my_id, 'dst': leader, 'leader': leader, 'type': 'check', 'log': logNum, 'term': term}
-                        sock.send(json.dumps(msg))
-                        sock.send(json.dumps(msg)) #TODO double sending to avoid drops, real sloppy
-                        log('%s sending a check to %s' % (msg['src'], msg['dst']))
+                log(('{} starting new election').format(my_id))
+                leader = 'FFFF'
+                # increase the term number
+                term += 1
+                # reset any past votes
+                votes = 0
+                promises = 0
+                # send a broadcast to all replicas to make me the leader
+                msg = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'votereq', 'log': logNum, 'term': term}
+                sock.send(json.dumps(msg))
+                log('%s sending a vote request to %s' % (msg['src'], msg['dst']))
                 lastrec = time.time()
 
         # if we have put requests in our to-do list
@@ -247,6 +245,7 @@ while True:
                         msg = {'src': my_id, 'dst':  'FFFF', 'leader': my_id, 'type': 'info', 'key': tempKey, 'value': tempValue, 'log': logNum, 'term': term}
                         sock.send(json.dumps(msg))
                         send_time = time.time()
+                        heartbeat = time.time()
                         log('%s sending data to all replicas' % (my_id))
 
         # if we haven't committed something, must resend the info
