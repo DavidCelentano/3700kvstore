@@ -38,8 +38,8 @@ def become_cand():
     term += 1
     elect_timer = time.time()
     leader = 'FFFF'
-    s_msg = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'votereq', 'term': term, 'MID': msg['MID']}
-    norm_send(sock, s_msg)
+    out = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'votereq', 'term': term, 'MID': msg['MID']}
+    norm_send(sock, out)
 
 def become_follower(leader_id):
     global state, voted, leader, elect_timer
@@ -51,8 +51,8 @@ def become_follower(leader_id):
 def become_leader():
     state = 'leader'
     leader = my_id
-    s_msg = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'append', 'data': [], 'term': term, 'MID': msg['MID']}
-    norm_send(sock, s_msg)
+    out = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'append', 'data': [], 'term': term, 'MID': msg['MID']}
+    norm_send(sock, out)
 
 
 
@@ -87,9 +87,9 @@ def request_update(new_term):
         id = commit_log[-1]['id']
     else:
         id = -1
-    s_msg = {'src': my_id, 'dst': leader, 'leader': leader, 'type': 'update', 'id': id, 'term': term}
+    out = {'src': my_id, 'dst': leader, 'leader': leader, 'type': 'update', 'id': id, 'term': term}
     term = new_term
-    norm_send(sock, s_msg)
+    norm_send(sock, out)
 
 def send_update(id, source):
     global leader, term, commit_log
@@ -99,8 +99,8 @@ def send_update(id, source):
             slice = x
             break
     data = commit_log[slice:]
-    s_msg = {'src': my_id, 'dst': source, 'leader': leader, 'type': 'update', 'data': data, 'term': term}
-    norm_send(sock, s_msg)
+    out = {'src': my_id, 'dst': source, 'leader': leader, 'type': 'update', 'data': data, 'term': term}
+    norm_send(sock, out)
 
 log(('Replica {} starting up').format(my_id))
 
@@ -124,8 +124,10 @@ while True:
             if msg_type == 'append':
                 become_follower(source)
                 temp_log.append(msg['data'])
+                out = {"src": my_id, "dst": source, "leader": leader, "type": "ack", 'term': term}
+                norm_send(sock, out)
             # redirect
-            if msg_type == 'put' or msg_type == 'get':
+            elif msg_type == 'put' or msg_type == 'get':
                 out = {"src": my_id, "dst": source, "leader": leader, "type": "fail", "MID": msg['mid']}
                 norm_send(sock, out)
         # heartbeat not heard in a while
@@ -143,17 +145,23 @@ while True:
             if msg_type == 'append':
                 become_follower(source)
                 temp_log.append(msg['data'])
+                out = {"src": my_id, "dst": source, "leader": leader, "type": "ack", 'term': term}
+                norm_send(sock, out)
                 continue
             # redirect until election ends
-            if msg_type == 'put' or msg_type == 'get':
+            elif msg_type == 'put' or msg_type == 'get':
                 out = {"src": my_id, "dst": source, "leader": 'FFFF', "type": "fail", "MID": msg['mid']}
                 norm_send(sock, out)
             # getting votes
-            if msg_type == 'vote':
+            elif msg_type == 'vote':
                 votes += 1
                 if votes > (len(replica_ids) / 2):
                     become_leader()
                     continue
+        # heartbeat not heard in a while
+        if time.time() - elect_timer > random.randint(150, 300):
+            become_cand()
+            continue
 
     if state == 'leader':
         if len(msg_raw) > 0:
@@ -166,8 +174,12 @@ while True:
                 become_follower(source)
                 request_update(msg['term'])
                 continue
-            if msg_type == 'update':
+            elif msg_type == 'update':
                 send_update(msg['term'], source)
+            elif msg_type == 'get':
+
+            elif msg_type == 'put':
+
 
         # heartbeat not heard in a while
         if time.time() - elect_timer > random.randint(150, 300):
