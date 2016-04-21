@@ -17,6 +17,7 @@ sock.connect(my_id)
 prints = True
 commit_log = []
 temp_log = []
+data = {}
 leader = 'FFFF'
 # the current term of leadership
 term = 0
@@ -102,6 +103,15 @@ def send_update(id, source):
     out = {'src': my_id, 'dst': source, 'leader': leader, 'type': 'update', 'data': data, 'term': term}
     norm_send(sock, out)
 
+def vote(cand):
+    global leader
+    out = {'src': my_id, 'dst': cand, 'leader': leader, 'type': 'vote', 'term': term}
+    norm_send(sock, out)
+
+def send_append():
+    out = {'src': my_id, 'dst': 'FFFF', 'leader': leader, 'type': 'append', 'term': term}
+    norm_send(sock, out)
+
 log(('Replica {} starting up').format(my_id))
 
 while True:
@@ -127,6 +137,10 @@ while True:
                 out = {"src": my_id, "dst": source, "leader": leader, "type": "ack", 'term': term}
                 norm_send(sock, out)
             # redirect
+            elif msg_type == 'votereq':
+                leader = 'FFFF'
+                if voted == False:
+                    vote(source)
             elif msg_type == 'put' or msg_type == 'get':
                 out = {"src": my_id, "dst": source, "leader": leader, "type": "fail", "MID": msg['mid']}
                 norm_send(sock, out)
@@ -159,7 +173,7 @@ while True:
                     become_leader()
                     continue
         # heartbeat not heard in a while
-        if time.time() - elect_timer > random.randint(150, 300):
+        if time.time() - elect_timer > random.randint(150, 300) * 0.001:
             become_cand()
             continue
 
@@ -177,8 +191,18 @@ while True:
             elif msg_type == 'update':
                 send_update(msg['term'], source)
             elif msg_type == 'get':
-
+                if msg['key'] in data:
+                    response = data[msg['key']]
+                else:
+                    response = ''
+                out = {"src": my_id, "dst": msg['dst'], "leader": leader,
+                     "type": "ok", "MID": msg['mid'], "value": response}
+                norm_send(sock, out)
             elif msg_type == 'put':
+                data[msg['key']] = msg['value']
+
+        if time.time() - heartbeat > 100 * 0.001:
+            send_append()
 
 
         # heartbeat not heard in a while
