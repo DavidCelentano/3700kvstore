@@ -39,8 +39,9 @@ def become_cand():
     term += 1
     elect_timer = time.time()
     leader = 'FFFF'
-    out = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'votereq', 'term': term, 'MID': msg['MID']}
+    out = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'votereq', 'term': term}
     norm_send(sock, out)
+    log('became candidate')
 
 def become_follower(leader_id):
     global state, voted, leader, elect_timer
@@ -50,16 +51,18 @@ def become_follower(leader_id):
     leader = leader_id
 
 def become_leader():
+    global state, leader
     state = 'leader'
     leader = my_id
-    out = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'append', 'data': [], 'term': term, 'MID': msg['MID']}
+    out = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'append', 'data': [], 'term': term}
     norm_send(sock, out)
+    log('became leader')
 
 
 
 def log(msg):
     if prints == True:
-        print '{}: {}'.format(datetime.datetime.now(), msg)
+        print '{} {} {}: {}'.format(datetime.datetime.now(), state, my_id, msg)
 
 
 def heartbeat_update():
@@ -104,13 +107,17 @@ def send_update(id, source):
     norm_send(sock, out)
 
 def vote(cand):
-    global leader
+    global leader, term
     out = {'src': my_id, 'dst': cand, 'leader': leader, 'type': 'vote', 'term': term}
     norm_send(sock, out)
+    log('voted for {}'.format(cand))
+    term += 1
 
 def send_append():
     out = {'src': my_id, 'dst': 'FFFF', 'leader': leader, 'type': 'append', 'term': term}
     norm_send(sock, out)
+    heartbeat_update()
+    log('sent empty append out')
 
 log(('Replica {} starting up').format(my_id))
 
@@ -133,20 +140,22 @@ while True:
             # heartbeat
             if msg_type == 'append':
                 become_follower(source)
-                temp_log.append(msg['data'])
+                #temp_log.append(msg['data'])
                 out = {"src": my_id, "dst": source, "leader": leader, "type": "ack", 'term': term}
                 norm_send(sock, out)
+                log('received append')
             # redirect
-            elif msg_type == 'votereq':
+            elif msg_type == 'votereq' and msg['term'] > term:
                 leader = 'FFFF'
                 if voted == False:
                     vote(source)
             elif msg_type == 'put' or msg_type == 'get':
-                out = {"src": my_id, "dst": source, "leader": leader, "type": "fail", "MID": msg['mid']}
+                out = {"src": my_id, "dst": source, "leader": leader, "type": "redirect", "MID": msg['MID']}
                 norm_send(sock, out)
         # heartbeat not heard in a while
-        if time.time() - elect_timer > random.randint(150, 300):
+        if time.time() - elect_timer > random.randint(550, 800) * 0.001:
             become_cand()
+            log('follower becoming candidate')
             continue
 
     if state == 'candidate':
@@ -164,7 +173,7 @@ while True:
                 continue
             # redirect until election ends
             elif msg_type == 'put' or msg_type == 'get':
-                out = {"src": my_id, "dst": source, "leader": 'FFFF', "type": "fail", "MID": msg['mid']}
+                out = {"src": my_id, "dst": source, "leader": 'FFFF', "type": "redirect", "MID": msg['MID']}
                 norm_send(sock, out)
             # getting votes
             elif msg_type == 'vote':
@@ -173,8 +182,9 @@ while True:
                     become_leader()
                     continue
         # heartbeat not heard in a while
-        if time.time() - elect_timer > random.randint(150, 300) * 0.001:
+        if time.time() - elect_timer > random.randint(550, 800) * 0.001:
             become_cand()
+            log('why is this happening')
             continue
 
     if state == 'leader':
@@ -186,6 +196,7 @@ while True:
             msg_type = msg['type']
             if msg_type == 'append' and msg['term'] > term:
                 become_follower(source)
+                log('dropped leadership')
                 request_update(msg['term'])
                 continue
             elif msg_type == 'update':
@@ -195,20 +206,21 @@ while True:
                     response = data[msg['key']]
                 else:
                     response = ''
-                out = {"src": my_id, "dst": msg['dst'], "leader": leader,
-                     "type": "ok", "MID": msg['mid'], "value": response}
+                out = {"src": my_id, "dst": source, "leader": leader,
+                     "type": "ok", "MID": msg['MID'], "value": response}
                 norm_send(sock, out)
+                log('received GET from {}'.format(source))
             elif msg_type == 'put':
                 data[msg['key']] = msg['value']
+                out = {"src": my_id, "dst": source, "leader": leader,
+                     "type": "ok", "MID": msg['MID']}
+                norm_send(sock, out)
+                log('received PUT from {}'.format(source))
 
-        if time.time() - heartbeat > 100 * 0.001:
+
+        if time.time() - heartbeat > 500 * 0.001:
             send_append()
 
-
-        # heartbeat not heard in a while
-        if time.time() - elect_timer > random.randint(150, 300):
-            become_cand()
-            continue
 
 
 
