@@ -34,7 +34,7 @@ prints = True
 # if we are in the process of a commit or not
 preparing = False
 # number of ready to commit replicas
-readyReps = 0
+ready_reps = 0
 # time until send next heartbeat
 heartbeat = 0
 # time since we've sent commit data to replicas
@@ -111,8 +111,9 @@ log(('Replica {} starting up').format(my_id))
 
 while True:
 
+    # check for new messages
     msg_raw = check_socket(sock)
-
+    # if there are any new messsages
     if len(msg_raw) > 0:
         msg = json.loads(msg_raw)
         # save the sender's id
@@ -146,12 +147,12 @@ while True:
 
         # handle ready messages, when enough are acquired, commit the change
         elif msg_type == 'ready' and msg['log'] <= log_num and msg['term'] <= term and leader == my_id:
-            readyReps += 1
+            ready_reps += 1
             send_time = time.time()
             log('{} recieved ready from replica {}'.format(my_id, source))
             # if quorum has been established
-            if readyReps > quorum:
-                readyReps = 0
+            if ready_reps > quorum:
+                ready_reps = 0
                 # increase the number of committed messages
                 log_num += len(val_list)
                 i = 0
@@ -312,44 +313,51 @@ while True:
 
                 flux_keys = []
                 temp_queue = collections.deque()
+
+                # respond to any GET's that are unaffected by preceding PUT's
                 for mess in msg_queue:
                     m_type = mess[4]
                     m_key = mess[0]
                     if m_type == 'put':
                         flux_keys.append(m_key)
                     if m_type == 'get' and (m_key not in flux_keys):
-                        if m_key not in flux_keys:
-                            g_key = m_key
-                            g_client = mess[2]
-                            g_msg_id = mess[3]
-                            if g_key in data:
-                                send_value = data[g_key]
-                            else:
-                                send_value = ''
-                            s_msg = {'src': my_id, 'dst': g_client, 'leader': leader, 'type': 'ok', 'MID': g_msg_id, 'value': send_value}
-                            norm_send(sock, s_msg)
-                            log('{} sending a GET confirmation to user {}'.format(my_id, g_client))
+                        g_key = m_key
+                        g_client = mess[2]
+                        g_msg_id = mess[3]
+                        if g_key in data:
+                            send_value = data[g_key]
+                        else:
+                            send_value = ''
+                        s_msg = {'src': my_id, 'dst': g_client, 'leader': leader, 'type': 'ok', 'MID': g_msg_id, 'value': send_value}
+                        norm_send(sock, s_msg)
+                        log('{} sending a GET confirmation to user {}'.format(my_id, g_client))
+                    # remove from message deque
                     else:
                         temp_queue.append(mess)
 
                 msg_queue = temp_queue
 
-                counter = 5
-                while len(msg_queue) > 0 and msg_queue[0][4] == 'put' and counter > 0:
-                    send_queue.append(msg_queue.popleft())
-                    counter -= 1
+                if msg_queue:
+                    while msg_queue[0][4] == 'put':
+                        send_queue.append(msg_queue.popleft())
+                        if len(msg_queue) == 0:
+                            break
 
-                if len(send_queue) > 0:
+                com_num = 0
+
+                if send_queue:
                     for put in send_queue:
+                        com_num += 1
                         key_list.append(put[0])
                         val_list.append(put[1])
-                        committing_clients.append((put[2], put[3]))
-                        ns_msg =  {'src': my_id, 'dst': put[2], 'leader': leader, 'type': 'ok', 'MID': put[3]}
+                        ns_msg = {'src': my_id, 'dst': put[2], 'leader': leader, 'type': 'ok', 'MID': put[3]}
                         norm_send(sock, ns_msg)
-                    log('{} sending a PUT confirmation to {} users'.format(my_id, len(committing_clients)))
-                    committing_clients = []
+                    log('{} sending a PUT confirmation to {} users'.format(my_id, com_num))
+                    # go into queuing state
                     preparing = True
-                    readyReps = 0
+                    # begin counting 'ready's
+                    ready_reps = 0
+                    # for id purposes
                     put_id = random.randint(1, 10000000000)
                     s_msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'prepare', 'log': log_num, 'term': term, 'put_id': put_id}
                     send_as_leader(sock, s_msg)
@@ -361,7 +369,7 @@ while True:
 
         # if we haven't committed something, must resend the info
         if preparing and (time.time() - send_time) > .3:
-            readyReps = 0
+            ready_reps = 0
             s_msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'prepare',
                    'log': log_num, 'term': term, 'put_id': put_id}
             send_as_leader(sock, s_msg)
