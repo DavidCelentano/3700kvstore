@@ -197,12 +197,12 @@ while True:
         # send a hearbeat to keep replicas updated
         if leader == my_id and (time.time() - heartbeat) > .1:
                 hearbeat = time.time()
-                #msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
-                #sock.send(json.dumps(msg))
+                msg = {'src': my_id, 'dst': 'FFFF', 'leader': my_id, 'type': 'heartbeat', 'log': logNum, 'term': term}
+                sock.send(json.dumps(msg))
                 # log('%s sending a heartbeat to %s' % (msg['src'], msg['dst']))
 
         # if the time since the last message is between 150 - 300 milliseconds we must start elections
-        if time.time() - lastrec > (random.randint(150, 300) * .001) and leader == 'FFFF': #TODO testing
+        if time.time() - lastrec > (random.randint(150, 300) * .001) and not leader == my_id:
                 log(('{} starting new election').format(my_id))
                 leader = 'FFFF'
                 # increase the term number
