@@ -41,6 +41,8 @@ sending = False
 readyReps = 0
 # if we haven't heard from the leader, singals start of an election
 panic = False
+# time since we've sent commit data to replicas
+send_time = time.time()
 
 msg_queue = collections.deque()
 
@@ -109,6 +111,7 @@ while True:
                 # handle ready messages, when enough are acquired, commit the change
                 if msgtype == 'ready' and msg['log'] >= logNum and msg['term'] >= term:
                         readyReps += 1
+                        send_time = time.time()
                         # if quorum has been established
                         if readyReps > (len(replica_ids) / 2) + 1:
                                 # TODO figure this stuff out so future readies dont reactivate this before
@@ -233,19 +236,23 @@ while True:
                                 msg = {'src': my_id, 'dst':  client, 'leader': leader, 'type': 'ok', 'MID': msg_id,
                                        'value': data[tempKey]}
                                 sock.send(json.dumps(msg))
-                                hearbeat = time.time()
                                 log('%s sending a GET confirmation to user %s' % (my_id, source))
                         # TODO what if the key doesnt exist
                 elif req[4] == 'put':
                         sending = True
                         msg = {'src': my_id, 'dst':  'FFFF', 'leader': my_id, 'type': 'info', 'key': tempKey, 'value': tempValue, 'log': logNum, 'term': term}
                         sock.send(json.dumps(msg))
-                        hearbeat = time.time()
+                        send_time = time.time()
                         log('%s sending data to all replicas' % (my_id))
 
+        # if we haven't committed something, must resend the info
+        if sending and (time.time() - send_time) > .150:
+                        msg = {'src': my_id, 'dst':  'FFFF', 'leader': my_id, 'type': 'info', 'key': tempKey, 'value': tempValue, 'log': logNum, 'term': term}
+                        sock.send(json.dumps(msg))
+                        log('%s RE-sending data to all replicas' % (my_id))
 
 # TODO LIST
-# refresh put commit process if info / ready gets dropped
+# fix leader transfer issues, gate sending abilities to leaders only
 # if a replica is behind, give the leaders log to it
 # during elections, exchange log numbers to ensure the leader is the most current
 
