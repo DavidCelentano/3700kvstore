@@ -16,7 +16,7 @@ sock.connect(my_id)
 # GLOBAL VARS #
 prints = True
 commit_log = []
-temp_log = []
+temp_log = collections.deque()
 data = {}
 leader = 'FFFF'
 # the current term of leadership
@@ -30,6 +30,12 @@ voted = False
 votes = 1
 # leader vars
 heartbeat = time.time()
+super_keys = collections.deque()
+waiting_clients = collections.deque()
+super_waiting_clients = collections.deque()
+super_temp_log = collections.deque()
+temp_keys = collections.deque()
+acks = 1
 
 
 def become_cand():
@@ -51,12 +57,15 @@ def become_follower(leader_id):
     leader = leader_id
 
 def become_leader():
-    global state, leader
+    global state, leader, acks, send_time
     state = 'leader'
     leader = my_id
     out = {'src': my_id, 'dst': 'FFFF', 'leader': 'FFFF', 'type': 'append', 'data': [], 'term': term}
     norm_send(sock, out)
     log('became leader')
+    acks = 1
+    heartbeat_update()
+    send_time = time.time()
 
 
 
@@ -100,7 +109,7 @@ def send_update(id, source):
     slice = 0
     for x in xrange(len(commit_log)):
         if commit_log[x]['id'] == id:
-            slice = x
+            slice = x + 1
             break
     data = commit_log[slice:]
     out = {'src': my_id, 'dst': source, 'leader': leader, 'type': 'update', 'data': data, 'term': term}
@@ -114,10 +123,41 @@ def vote(cand):
     term += 1
 
 def send_append():
-    out = {'src': my_id, 'dst': 'FFFF', 'leader': leader, 'type': 'append', 'term': term}
+    global temp_log, leader
+    if temp_log:
+        log('sent append out with temp {}'.format(len(temp_log)))
+    else:
+        log('sent heartbeat out')
+    out = {'src': my_id, 'dst': 'FFFF', 'leader': leader, 'type': 'append', 'data': list(temp_log), 'term': term}
     norm_send(sock, out)
     heartbeat_update()
-    log('sent empty append out')
+
+def commit_temp():
+    global leader, temp_log, commit_log, waiting_clients, acks
+    commit_log += temp_log
+    for pair in temp_log:
+        data[pair['key']] = pair['value']
+    for client in waiting_clients:
+        out = {"src": my_id, "dst": client[0], "leader": leader, "type": "ok", "MID": client[1]}
+        norm_send(sock, out)
+        log('confirmed PUT from {}'.format(client[0]))
+    temp_log = collections.deque()
+    waiting_clients = collections.deque()
+    temp_keys = collections.deque()
+    acks = 0
+
+def replicas_commit():
+    out = {"src": my_id, "dst": 'FFFF', "leader": leader, "type": "commit"}
+    norm_send(sock, out)
+
+def append_react(source, data):
+    global leader, term, temp_log
+    become_follower(source)
+    temp_log = collections.deque(data)
+    out = {"src": my_id, "dst": source, "leader": leader, "type": "ack",
+           'new': len(data), 'term': term}
+    norm_send(sock, out)
+    log('received append')
 
 log(('Replica {} starting up').format(my_id))
 
@@ -139,21 +179,28 @@ while True:
             msg_type = msg['type']
             # heartbeat
             if msg_type == 'append':
-                become_follower(source)
-                #temp_log.append(msg['data'])
-                out = {"src": my_id, "dst": source, "leader": leader, "type": "ack", 'term': term}
-                norm_send(sock, out)
-                log('received append')
-            # redirect
+                if msg['term'] > term:
+                    log('need update')
+                    request_update(msg['term'])
+                else:
+                    append_react(source, msg['data'])
+                continue
+            # commit
+            elif msg_type == 'commit':
+                for commit in temp_log:
+                    data[commit['key']] = commit['value']
+                    continue
+            # voterequest
             elif msg_type == 'votereq' and msg['term'] > term:
                 leader = 'FFFF'
                 if voted == False:
                     vote(source)
+            # redirect
             elif msg_type == 'put' or msg_type == 'get':
                 out = {"src": my_id, "dst": source, "leader": leader, "type": "redirect", "MID": msg['MID']}
                 norm_send(sock, out)
         # heartbeat not heard in a while
-        if time.time() - elect_timer > random.randint(550, 800) * 0.001:
+        if time.time() - elect_timer > random.randint(650, 900) * 0.001:
             become_cand()
             log('follower becoming candidate')
             continue
@@ -166,10 +213,11 @@ while True:
             # save the type of message received
             msg_type = msg['type']
             if msg_type == 'append':
-                become_follower(source)
-                temp_log.append(msg['data'])
-                out = {"src": my_id, "dst": source, "leader": leader, "type": "ack", 'term': term}
-                norm_send(sock, out)
+                if msg['term'] > term:
+                    log('need update')
+                    request_update(msg['term'])
+                else:
+                    append_react(source, msg['data'])
                 continue
             # redirect until election ends
             elif msg_type == 'put' or msg_type == 'get':
@@ -181,8 +229,13 @@ while True:
                 if votes > (len(replica_ids) / 2):
                     become_leader()
                     continue
+            # voterequest
+            elif msg_type == 'votereq' and msg['term'] > term:
+                become_follower('FFFF')
+                vote(source)
+                continue
         # heartbeat not heard in a while
-        if time.time() - elect_timer > random.randint(550, 800) * 0.001:
+        if time.time() - elect_timer > random.randint(650, 900) * 0.001:
             become_cand()
             log('why is this happening')
             continue
@@ -194,6 +247,12 @@ while True:
             source = msg['src']
             # save the type of message received
             msg_type = msg['type']
+            if msg_type == 'ack':
+                if msg['new'] == len(temp_log):
+                    acks += 1
+                    if acks > (len(replica_ids) / 2):
+                        commit_temp()
+                        replicas_commit()
             if msg_type == 'append' and msg['term'] > term:
                 become_follower(source)
                 log('dropped leadership')
@@ -202,24 +261,48 @@ while True:
             elif msg_type == 'update':
                 send_update(msg['term'], source)
             elif msg_type == 'get':
-                if msg['key'] in data:
-                    response = data[msg['key']]
-                else:
-                    response = ''
-                out = {"src": my_id, "dst": source, "leader": leader,
-                     "type": "ok", "MID": msg['MID'], "value": response}
-                norm_send(sock, out)
-                log('received GET from {}'.format(source))
+                flag = False
+                super_temp_log.append({'key': msg['key'], 'type': 'get'})
+                super_waiting_clients.append((source, msg['MID']))
+                log('received GET {} from {}'.format(msg['key'], source))
             elif msg_type == 'put':
-                data[msg['key']] = msg['value']
-                out = {"src": my_id, "dst": source, "leader": leader,
-                     "type": "ok", "MID": msg['MID']}
-                norm_send(sock, out)
-                log('received PUT from {}'.format(source))
+                super_keys.append(msg['key'])
+                super_temp_log.append({'key': msg['key'], 'value': msg['value'],
+                                       'type': 'put', 'id': random.randint(0, 1000000)})
+                super_waiting_clients.append((source, msg['MID']))
+                log('received PUT {} from {}'.format(msg['key'], source))
+            if len(temp_log) == 0:
+                # do gets
+                while super_temp_log and super_temp_log[0]['type'] == 'get':
+                    get = super_temp_log.popleft()
+                    who = super_waiting_clients.popleft()
+                    who2 = who[1]
+                    who = who[0]
+                    if get['key'] in data:
+                        what = data[get['key']]
+                    else:
+                        what = ''
+                    out = {"src": my_id, "dst": who, "leader": leader,
+                     "type": "ok", "MID": who2, "value": what}
+                    norm_send(sock, out)
 
+                while super_temp_log and super_temp_log[0]['type'] == 'put':
+                    temp_log.append(super_temp_log.popleft())
+                    waiting_clients.append(super_waiting_clients.popleft())
+                    temp_keys.append(super_keys.popleft())
+                if temp_log:
+                    send_append()
+                    send_time = time.time()
 
-        if time.time() - heartbeat > 500 * 0.001:
+        if time.time() - send_time > 0.5:
+            acks = 1
             send_append()
+            send_time = time.time()
+            log('RESENT')
+
+        if time.time() - heartbeat > 600 * 0.001:
+            send_append()
+            log('would have heartbeated')
 
 
 
